@@ -64,11 +64,11 @@ def generate_final_pdf(name, sig_bytes):
     return pdf_out.getvalue()
 
 # --- UI ---
-st.title("TriNetX 資料庫使用管理辦法")
+st.title("新光醫院TriNetX資料庫使用管理辦法同意書")
 st.caption("線上簽署系統")
 
 # --- FIX 2: Better Image-Based PDF Preview (Bypasses Chrome Block) ---
-st.write("### 📄 請閱覽合約條款 (Contract Review)")
+st.write("###請閱覽合約條款")
 with st.container(height=500, border=True):
     # We display images sequentially. 
     # If the images aren't in the repo yet, it shows the error message.
@@ -90,7 +90,7 @@ st.divider()
 # --- INPUTS ---
 col1, col2 = st.columns(2)
 with col1:
-    full_name = st.text_input("立約人姓名 (Full Name)", placeholder="請輸入中文姓名")
+    full_name = st.text_input("立約人姓名", placeholder="請輸入中文姓名")
 with col2:
     agree = st.checkbox("我已詳細閱讀並同意上述規定")
 
@@ -126,7 +126,6 @@ if st.button("確認並簽署 (Confirm & Sign)", type="primary", use_container_w
                 
                 if r.status_code == 200 and r.json().get("ok"):
                     st.success("簽署成功！文件已存檔。請按上一頁返回表單")
-                    st.balloons()
                     st.download_button("📥 下載副本", final_pdf, fname, "application/pdf")
                 else:
                     st.error("❌ 上傳失敗，請檢查網路連線或聯繫管理員。")
