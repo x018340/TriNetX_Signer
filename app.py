@@ -20,6 +20,14 @@ TEMPLATE_PDF = "assets/template.pdf"
 
 st.set_page_config(page_title="TriNetX Signer", page_icon="✍️", layout="centered")
 
+# --- INITIALIZE SESSION STATE ---
+if "signed_success" not in st.session_state:
+    st.session_state.signed_success = False
+if "final_pdf_data" not in st.session_state:
+    st.session_state.final_pdf_data = None
+if "final_filename" not in st.session_state:
+    st.session_state.final_filename = ""
+
 # --- FUNCTIONS ---
 def create_overlay(name, sig_bytes):
     packet = BytesIO()
@@ -34,11 +42,9 @@ def create_overlay(name, sig_bytes):
     can.drawString(350, 230, f"立約人：{name}")
     can.drawString(350, 205, f"日期：{datetime.now().strftime('%Y/%m/%d')}")
     
-    # --- FIX 1: Process Signature to remove black box ---
+    # Process Signature to remove black box
     sig_img = Image.open(BytesIO(sig_bytes)).convert("RGBA")
-    # Create a white background image
     white_bg = Image.new("RGBA", sig_img.size, "WHITE")
-    # Composite signature over white
     final_sig = Image.alpha_composite(white_bg, sig_img).convert("RGB")
     
     # Place Signature
@@ -63,75 +69,101 @@ def generate_final_pdf(name, sig_bytes):
     output.write(pdf_out)
     return pdf_out.getvalue()
 
-# --- UI ---
-st.title("新光醫院TriNetX資料庫使用管理辦法同意書")
-st.caption("線上簽署系統")
+# --- UI LOGIC ---
 
-# --- FIX 2: Better Image-Based PDF Preview (Bypasses Chrome Block) ---
-st.write("請閱覽合約條款")
-with st.container(height=500, border=True):
-    # We display images sequentially. 
-    # If the images aren't in the repo yet, it shows the error message.
-    pages = ["assets/page1.png", "assets/page2.png", "assets/page3.png"]
-    missing_pages = False
-    for p in pages:
-        try:
-            st.image(p, use_container_width=True)
-        except:
-            missing_pages = True
+# 🟢 VIEW 1: SUCCESS SCREEN (Only shown after successful upload)
+if st.session_state.signed_success:
+    st.title("TriNetX 資料庫使用管理辦法")
+    st.caption("線上簽署系統")
+    st.divider()
     
-    if missing_pages:
-        st.warning("⚠️ 預覽圖片載入失敗。請確認 assets 資料夾內是否有 page1.png, page2.png, page3.png。")
-        with open(TEMPLATE_PDF, "rb") as f:
-            st.download_button("📥 下載 PDF 檔案閱讀", f, "Agreement.pdf")
+    st.success("簽署成功！文件已存檔。")
+    st.success("請在下載副本後按上一頁返回表單")
+    
+    st.download_button(
+        label="📥 下載副本",
+        data=st.session_state.final_pdf_data,
+        file_name=st.session_state.final_filename,
+        mime="application/pdf"
+    )
+    
+    # Optional: Allow resetting to sign for another person
+    if st.button("↺ 重新簽署 (Sign Another)"):
+        st.session_state.signed_success = False
+        st.session_state.final_pdf_data = None
+        st.rerun()
 
-st.divider()
+# 🔵 VIEW 2: INPUT FORM (Hidden when signed_success is True)
+else:
+    st.title("新光醫院TriNetX資料庫使用管理辦法同意書")
+    st.caption("線上簽署系統")
 
-# --- INPUTS ---
-col1, col2 = st.columns(2)
-with col1:
-    full_name = st.text_input("立約人姓名", placeholder="請輸入中文姓名")
-with col2:
-    agree = st.checkbox("我已詳細閱讀並同意上述規定")
-
-st.write("**立約人簽署 (Signature):**")
-canvas_result = st_canvas(
-    fill_color="white", stroke_width=4, stroke_color="black",
-    background_color="#FFFFFF", height=200, width=400, key="agreement_sig"
-)
-
-if st.button("確認並簽署 (Confirm & Sign)", type="primary", use_container_width=True, disabled=not (full_name and agree)):
-    if canvas_result.image_data is not None and np.std(canvas_result.image_data) > 1:
-        with st.spinner("⏳ 正在產生文件並儲存..."):
+    # PREVIEW
+    st.write("請閱覽合約條款")
+    with st.container(height=500, border=True):
+        pages = ["assets/page1.png", "assets/page2.png", "assets/page3.png"]
+        missing_pages = False
+        for p in pages:
             try:
-                # 1. Process Sig
-                img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
-                buf_sig = BytesIO()
-                img.save(buf_sig, format="PNG")
-                
-                # 2. Build PDF
-                final_pdf = generate_final_pdf(full_name, buf_sig.getvalue())
-                b64_pdf = base64.b64encode(final_pdf).decode("utf-8")
-                
-                # 3. Upload via GAS
-                fname = f"{datetime.now().strftime('%Y%m%d')}_{full_name}.pdf"
-                payload = {
-                    "api_key": GAS_KEY,
-                    "folderId": ADMIN_FOLDER_ID,
-                    "filename": fname,
-                    "pdf_blob": b64_pdf
-                }
-                
-                r = requests.post(GAS_URL, json=payload, timeout=60)
-                
-                if r.status_code == 200 and r.json().get("ok"):
-                    st.success("簽署成功！文件已存檔。")
-                    st.success("請在下載副本後按上一頁返回表單")
-                    st.download_button("📥 下載副本", final_pdf, fname, "application/pdf")
-                else:
-                    st.error("❌ 上傳失敗，請檢查網路連線或聯繫管理員。")
+                st.image(p, use_container_width=True)
+            except:
+                missing_pages = True
+        
+        if missing_pages:
+            st.warning("⚠️ 預覽圖片載入失敗。請確認 assets 資料夾內是否有 page1.png, page2.png, page3.png。")
+            with open(TEMPLATE_PDF, "rb") as f:
+                st.download_button("📥 下載 PDF 檔案閱讀", f, "Agreement.pdf")
+
+    st.divider()
+
+    # INPUTS
+    col1, col2 = st.columns(2)
+    with col1:
+        full_name = st.text_input("立約人姓名", placeholder="請輸入中文姓名")
+    with col2:
+        agree = st.checkbox("我已詳細閱讀並同意上述規定")
+
+    st.write("**立約人簽署**")
+    canvas_result = st_canvas(
+        fill_color="white", stroke_width=4, stroke_color="black",
+        background_color="#FFFFFF", height=200, width=400, key="agreement_sig"
+    )
+
+    # CONFIRM BUTTON
+    if st.button("確認並簽署", type="primary", use_container_width=True, disabled=not (full_name and agree)):
+        if canvas_result.image_data is not None and np.std(canvas_result.image_data) > 1:
+            with st.spinner("⏳ 正在產生文件並儲存..."):
+                try:
+                    # 1. Process Sig
+                    img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
+                    buf_sig = BytesIO()
+                    img.save(buf_sig, format="PNG")
                     
-            except Exception as e:
-                st.error(f"❌ 系統錯誤: {str(e)}")
-    else:
-        st.warning("⚠️ 請先於區域內簽名。")
+                    # 2. Build PDF
+                    final_pdf = generate_final_pdf(full_name, buf_sig.getvalue())
+                    b64_pdf = base64.b64encode(final_pdf).decode("utf-8")
+                    
+                    # 3. Upload via GAS
+                    fname = f"{datetime.now().strftime('%Y%m%d')}_{full_name}.pdf"
+                    payload = {
+                        "api_key": GAS_KEY,
+                        "folderId": ADMIN_FOLDER_ID,
+                        "filename": fname,
+                        "pdf_blob": b64_pdf
+                    }
+                    
+                    r = requests.post(GAS_URL, json=payload, timeout=60)
+                    
+                    if r.status_code == 200 and r.json().get("ok"):
+                        # ✅ SUCCESS LOGIC: Update State & Rerun
+                        st.session_state.final_pdf_data = final_pdf
+                        st.session_state.final_filename = fname
+                        st.session_state.signed_success = True
+                        st.rerun() # Forces page reload to show View 1
+                    else:
+                        st.error("❌ 上傳失敗，請檢查網路連線或聯繫管理員。")
+                        
+                except Exception as e:
+                    st.error(f"❌ 系統錯誤: {str(e)}")
+        else:
+            st.warning("⚠️ 請先於區域內簽名。")
