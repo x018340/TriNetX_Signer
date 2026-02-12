@@ -21,29 +21,28 @@ TEMPLATE_PDF = "assets/template.pdf"
 st.set_page_config(page_title="TriNetX Signer", page_icon="✍️", layout="centered")
 
 # --- FUNCTIONS ---
-def display_pdf(file_path):
-    """Displays the PDF in an iframe for PC users."""
-    with open(file_path, "rb") as f:
-        base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
-    st.markdown(pdf_display, unsafe_allow_html=True)
-
 def create_overlay(name, sig_bytes):
     packet = BytesIO()
-    can = canvas.Canvas(packet, pagesize=(595.27, 841.89)) # A4 Size
+    can = canvas.Canvas(packet, pagesize=(595.27, 841.89))
     try:
         pdfmetrics.registerFont(TTFont('ChineseFont', FONT_PATH))
         can.setFont('ChineseFont', 16)
     except:
         can.setFont("Helvetica", 16)
     
-    # Adjust coordinates for Page 3 (X, Y from bottom-left)
-    # Right side: X=350~400
+    # Text Placement
     can.drawString(350, 230, f"立約人：{name}")
     can.drawString(350, 205, f"日期：{datetime.now().strftime('%Y/%m/%d')}")
     
-    sig_img = Image.open(BytesIO(sig_bytes))
-    can.drawInlineImage(sig_img, 350, 130, width=150, height=70)
+    # --- FIX 1: Process Signature to remove black box ---
+    sig_img = Image.open(BytesIO(sig_bytes)).convert("RGBA")
+    # Create a white background image
+    white_bg = Image.new("RGBA", sig_img.size, "WHITE")
+    # Composite signature over white
+    final_sig = Image.alpha_composite(white_bg, sig_img).convert("RGB")
+    
+    # Place Signature
+    can.drawInlineImage(final_sig, 350, 130, width=150, height=70)
     can.save()
     packet.seek(0)
     return packet
@@ -66,21 +65,32 @@ def generate_final_pdf(name, sig_bytes):
 
 # --- UI ---
 st.title("TriNetX 資料庫使用管理辦法")
-st.caption("線上簽署系統 (V2.1)")
+st.caption("線上簽署系統")
 
-# 📄 PDF VIEWER
-st.write("### 📄 請閱讀下方文件內容")
-try:
-    display_pdf(TEMPLATE_PDF)
-except Exception as e:
-    st.error(f"無法載入預覽: {e}")
+# --- FIX 2: Better Image-Based PDF Preview (Bypasses Chrome Block) ---
+st.write("### 📄 請閱覽合約條款 (Contract Review)")
+with st.container(height=500, border=True):
+    # We display images sequentially. 
+    # If the images aren't in the repo yet, it shows the error message.
+    pages = ["assets/page1.png", "assets/page2.png", "assets/page3.png"]
+    missing_pages = False
+    for p in pages:
+        try:
+            st.image(p, use_container_width=True)
+        except:
+            missing_pages = True
+    
+    if missing_pages:
+        st.warning("⚠️ 預覽圖片載入失敗。請確認 assets 資料夾內是否有 page1.png, page2.png, page3.png。")
+        with open(TEMPLATE_PDF, "rb") as f:
+            st.download_button("📥 下載 PDF 檔案閱讀", f, "Agreement.pdf")
 
 st.divider()
 
 # --- INPUTS ---
 col1, col2 = st.columns(2)
 with col1:
-    full_name = st.text_input("立約人姓名 (Full Name)", placeholder="請輸入姓名")
+    full_name = st.text_input("立約人姓名 (Full Name)", placeholder="請輸入中文姓名")
 with col2:
     agree = st.checkbox("我已詳細閱讀並同意上述規定")
 
@@ -92,42 +102,36 @@ canvas_result = st_canvas(
 
 if st.button("確認並簽署 (Confirm & Sign)", type="primary", use_container_width=True, disabled=not (full_name and agree)):
     if canvas_result.image_data is not None and np.std(canvas_result.image_data) > 1:
-        with st.spinner("⏳ 正在產生 PDF 並同步至雲端..."):
+        with st.spinner("⏳ 正在產生文件並儲存..."):
             try:
-                # 1. Image
+                # 1. Process Sig
                 img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
                 buf_sig = BytesIO()
                 img.save(buf_sig, format="PNG")
                 
-                # 2. PDF
+                # 2. Build PDF
                 final_pdf = generate_final_pdf(full_name, buf_sig.getvalue())
                 b64_pdf = base64.b64encode(final_pdf).decode("utf-8")
                 
-                # 3. Request
+                # 3. Upload via GAS
                 fname = f"{datetime.now().strftime('%Y%m%d')}_{full_name}.pdf"
                 payload = {
-                    "action": "upload",
                     "api_key": GAS_KEY,
                     "folderId": ADMIN_FOLDER_ID,
                     "filename": fname,
                     "pdf_blob": b64_pdf
                 }
                 
-                # Use json=payload to ensure correct content-type
                 r = requests.post(GAS_URL, json=payload, timeout=60)
                 
-                if r.status_code == 200:
-                    res = r.json()
-                    if res.get("ok"):
-                        st.success("🎉 簽署成功！文件已儲存至管理者資料夾。")
-                        st.balloons()
-                        st.download_button("📥 下載您的副本 (Download Your Copy)", final_pdf, fname, "application/pdf")
-                    else:
-                        st.error(f"❌ 雲端錯誤: {res.get('error')}")
+                if r.status_code == 200 and r.json().get("ok"):
+                    st.success("🎉 簽署成功！文件已存檔。")
+                    st.balloons()
+                    st.download_button("📥 下載您的副本 (Backup)", final_pdf, fname, "application/pdf")
                 else:
-                    st.error(f"❌ 伺服器無回應 ({r.status_code})")
+                    st.error("❌ 上傳失敗，請檢查網路連線或聯繫管理員。")
                     
             except Exception as e:
                 st.error(f"❌ 系統錯誤: {str(e)}")
     else:
-        st.warning("⚠️ 請先於白色區域內簽名。")
+        st.warning("⚠️ 請先於區域內簽名。")
