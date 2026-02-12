@@ -125,9 +125,9 @@ if st.button("確認並簽署 (Confirm & Sign)", type="primary", use_container_w
                 r = requests.post(GAS_URL, json=payload, timeout=60)
                 
                 if r.status_code == 200 and r.json().get("ok"):
-                    st.success("🎉 簽署成功！文件已存檔。")
+                    st.success("簽署成功！文件已存檔。請按上一頁返回表單")
                     st.balloons()
-                    st.download_button("📥 下載您的副本 (Backup)", final_pdf, fname, "application/pdf")
+                    st.download_button("📥 下載副本", final_pdf, fname, "application/pdf")
                 else:
                     st.error("❌ 上傳失敗，請檢查網路連線或聯繫管理員。")
                     
