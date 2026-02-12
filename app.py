@@ -68,7 +68,7 @@ st.title("新光醫院TriNetX資料庫使用管理辦法同意書")
 st.caption("線上簽署系統")
 
 # --- FIX 2: Better Image-Based PDF Preview (Bypasses Chrome Block) ---
-st.write("###請閱覽合約條款")
+st.write("請閱覽合約條款")
 with st.container(height=500, border=True):
     # We display images sequentially. 
     # If the images aren't in the repo yet, it shows the error message.
