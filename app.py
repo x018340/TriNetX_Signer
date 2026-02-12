@@ -18,24 +18,32 @@ GAS_KEY = st.secrets["gas"]["api_key"]
 FONT_PATH = "assets/font_CH.ttf"
 TEMPLATE_PDF = "assets/template.pdf"
 
-st.set_page_config(page_title="TriNetX Signer", page_icon="✍️")
+st.set_page_config(page_title="TriNetX Signer", page_icon="✍️", layout="centered")
 
-# --- PDF GENERATION ---
+# --- FUNCTIONS ---
+def display_pdf(file_path):
+    """Displays the PDF in an iframe for PC users."""
+    with open(file_path, "rb") as f:
+        base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+    st.markdown(pdf_display, unsafe_allow_html=True)
+
 def create_overlay(name, sig_bytes):
     packet = BytesIO()
-    can = canvas.Canvas(packet, pagesize=(595.27, 841.89))
+    can = canvas.Canvas(packet, pagesize=(595.27, 841.89)) # A4 Size
     try:
         pdfmetrics.registerFont(TTFont('ChineseFont', FONT_PATH))
-        can.setFont('ChineseFont', 14)
+        can.setFont('ChineseFont', 16)
     except:
-        can.setFont("Helvetica", 14)
+        can.setFont("Helvetica", 16)
     
-    # Coordinates for Page 3
-    can.drawString(380, 215, f"立約人：{name}")
-    can.drawString(380, 195, f"日期：{datetime.now().strftime('%Y/%m/%d')}")
+    # Adjust coordinates for Page 3 (X, Y from bottom-left)
+    # Right side: X=350~400
+    can.drawString(350, 230, f"立約人：{name}")
+    can.drawString(350, 205, f"日期：{datetime.now().strftime('%Y/%m/%d')}")
     
     sig_img = Image.open(BytesIO(sig_bytes))
-    can.drawInlineImage(sig_img, 380, 120, width=120, height=60)
+    can.drawInlineImage(sig_img, 350, 130, width=150, height=70)
     can.save()
     packet.seek(0)
     return packet
@@ -58,67 +66,68 @@ def generate_final_pdf(name, sig_bytes):
 
 # --- UI ---
 st.title("TriNetX 資料庫使用管理辦法")
-st.subheader("線上簽署系統")
+st.caption("線上簽署系統 (V2.1)")
 
-# 📄 PREVIEW SECTION (The fix for reading)
-st.write("### 📄 請閱讀合約內容 (Contract Review)")
-with st.container(height=500, border=True):
-    try:
-        st.image("assets/page1.png", caption="Page 1", use_container_width=True)
-        st.image("assets/page2.png", caption="Page 2", use_container_width=True)
-        st.image("assets/page3.png", caption="Page 3", use_container_width=True)
-    except:
-        st.warning("⚠️ 無法載入預覽圖片，請下載下方 PDF 閱讀。")
-        with open(TEMPLATE_PDF, "rb") as f:
-            st.download_button("📥 下載完整條款 (Download PDF)", f, "TriNetX_Rules.pdf")
+# 📄 PDF VIEWER
+st.write("### 📄 請閱讀下方文件內容")
+try:
+    display_pdf(TEMPLATE_PDF)
+except Exception as e:
+    st.error(f"無法載入預覽: {e}")
 
 st.divider()
 
-# --- INPUT SECTION ---
-full_name = st.text_input("立約人姓名 (Full Name)", placeholder="請輸入中文全名")
-agree = st.checkbox("我已詳細閱讀並同意上述「TriNetX 資料庫使用管理辦法」之所有規定")
+# --- INPUTS ---
+col1, col2 = st.columns(2)
+with col1:
+    full_name = st.text_input("立約人姓名 (Full Name)", placeholder="請輸入姓名")
+with col2:
+    agree = st.checkbox("我已詳細閱讀並同意上述規定")
 
-st.write("**請於下方灰色區域簽名 (Please Sign Below):**")
+st.write("**立約人簽署 (Signature):**")
 canvas_result = st_canvas(
     fill_color="white", stroke_width=4, stroke_color="black",
-    background_color="#FFFFFF", height=180, width=350, key="agreement_sig"
+    background_color="#FFFFFF", height=200, width=400, key="agreement_sig"
 )
 
 if st.button("確認並簽署 (Confirm & Sign)", type="primary", use_container_width=True, disabled=not (full_name and agree)):
     if canvas_result.image_data is not None and np.std(canvas_result.image_data) > 1:
-        with st.spinner("正在處理上傳..."):
+        with st.spinner("⏳ 正在產生 PDF 並同步至雲端..."):
             try:
-                # 1. Process Signature
+                # 1. Image
                 img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
-                buffered_sig = BytesIO()
-                img.save(buffered_sig, format="PNG")
+                buf_sig = BytesIO()
+                img.save(buf_sig, format="PNG")
                 
-                # 2. Build PDF
-                final_pdf_bytes = generate_final_pdf(full_name, buffered_sig.getvalue())
+                # 2. PDF
+                final_pdf = generate_final_pdf(full_name, buf_sig.getvalue())
+                b64_pdf = base64.b64encode(final_pdf).decode("utf-8")
                 
-                # 3. Base64 for upload
-                pdf_b64 = base64.b64encode(final_pdf_bytes).decode("utf-8")
-                
-                # 4. Upload to GAS
-                filename = f"{datetime.now().strftime('%Y%m%d')}_{full_name}.pdf"
+                # 3. Request
+                fname = f"{datetime.now().strftime('%Y%m%d')}_{full_name}.pdf"
                 payload = {
                     "action": "upload",
                     "api_key": GAS_KEY,
                     "folderId": ADMIN_FOLDER_ID,
-                    "filename": filename,
-                    "pdf_blob": pdf_b64  # Key name simplified
+                    "filename": fname,
+                    "pdf_blob": b64_pdf
                 }
                 
-                r = requests.post(GAS_URL, json=payload, timeout=45)
-                res_data = r.json()
+                # Use json=payload to ensure correct content-type
+                r = requests.post(GAS_URL, json=payload, timeout=60)
                 
-                if res_data.get("ok"):
-                    st.success("✅ 簽署完成！文件已存檔。")
-                    st.balloons()
-                    st.download_button("📥 下載您的副本 (Download Your Copy)", final_pdf_bytes, filename, "application/pdf")
+                if r.status_code == 200:
+                    res = r.json()
+                    if res.get("ok"):
+                        st.success("🎉 簽署成功！文件已儲存至管理者資料夾。")
+                        st.balloons()
+                        st.download_button("📥 下載您的副本 (Download Your Copy)", final_pdf, fname, "application/pdf")
+                    else:
+                        st.error(f"❌ 雲端錯誤: {res.get('error')}")
                 else:
-                    st.error(f"❌ 上傳失敗: {res_data.get('error')}")
+                    st.error(f"❌ 伺服器無回應 ({r.status_code})")
+                    
             except Exception as e:
                 st.error(f"❌ 系統錯誤: {str(e)}")
     else:
-        st.warning("⚠️ 請務必在簽名板上簽署。")
+        st.warning("⚠️ 請先於白色區域內簽名。")
